@@ -66,8 +66,7 @@ export function allowedRollout(file, codexHome) {
   try {
     const real = fs.realpathSync(file);
     return ['sessions', 'archived_sessions'].some(name => {
-      let directory;
-      try { directory = fs.realpathSync(path.join(codexHome, name)); } catch { return false; }
+      const directory = fs.realpathSync(path.join(codexHome, name));
       const relative = path.relative(directory, real);
       return relative && !relative.startsWith('..' + path.sep) && relative !== '..' && !path.isAbsolute(relative) && real.endsWith('.jsonl');
     }) ? real : null;

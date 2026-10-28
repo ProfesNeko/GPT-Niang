@@ -71,14 +71,7 @@ function Fit-QuoteText {
   $display=$full
   if($script:quoteLayoutMap.ContainsKey($full)){$display=$script:quoteLayoutMap[$full]}
   $expectedLines=if($display.Contains("`n")){($display-split "`n").Count}else{0}
-  try{$script:quoteLayout=Get-WidgetQuoteLayout $display $text $expectedLines}
-  catch{
-    # Reflow only a failed display attempt; Tag retains the full original
-    # for the tooltip and copy action, including its explicit line breaks.
-    $display=($full-replace '\s+',' ').Trim()
-    try{$script:quoteLayout=Get-WidgetQuoteLayout $display $text}
-    catch{$display='…';$script:quoteLayout=Get-WidgetQuoteLayout $display $text}
-  }
+  $script:quoteLayout=Get-WidgetQuoteLayout $display $text $expectedLines
   $text.Text=$display;$text.Width=$script:quoteLayout.width;$text.FontSize=$script:quoteLayout.fontSize;$text.LineHeight=$script:quoteLayout.lineHeight
   $text.LineStackingStrategy=[Windows.LineStackingStrategy]::BlockLineHeight
   $text.RenderTransform=[Windows.Media.TranslateTransform]::new($script:quoteLayout.offsetX,$script:quoteLayout.offsetY)
@@ -86,7 +79,7 @@ function Fit-QuoteText {
 
 function Set-WidgetSceneLayout {
   $scene=$script:ui.SceneText
-  if($script:bubbleMode-in @('quote','completion') -and $script:quoteLayout){
+  if($script:bubbleMode-eq 'quote' -and $script:quoteLayout){
     [Windows.Controls.Canvas]::SetLeft($scene,155-$script:quoteLayout.width/2);[Windows.Controls.Canvas]::SetTop($scene,18)
     $scene.Width=$script:quoteLayout.width;$scene.Height=134
   }else{

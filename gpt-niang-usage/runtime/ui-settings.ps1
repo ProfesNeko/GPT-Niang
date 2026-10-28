@@ -1,4 +1,4 @@
-﻿function Open-QuoteEditor {
+function Open-QuoteEditor {
   if($script:quoteEditor -and $script:quoteEditor.IsVisible){$script:quoteEditor.Activate()|Out-Null;return}
   $editor=[Windows.Markup.XamlReader]::Parse(@'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -33,7 +33,7 @@
         else{@{text=$text;weight=1}}
       })
       $saved=Save-WidgetQuotes $script:dataDir $rows
-      $script:quoteEditor.FindName('Feedback').Text="已保存 $($saved.quotes.Count) 句。下一次显示语录时就会使用。"
+      $script:quoteEditor.FindName('Feedback').Text="已保存 $($saved.quotes.Count) 句。下一次点击气泡时就会使用。"
     }catch{$script:quoteEditor.FindName('Feedback').Text=$_.Exception.Message}
   })
   $editor.FindName('Defaults').Add_Click({
@@ -61,6 +61,7 @@ function Initialize-WidgetSettingsMenu {
      <ContentPresenter ContentSource="Header" RecognizesAccessKey="True" VerticalAlignment="Center"/>
      <TextBlock x:Name="CheckMark" Grid.Column="1" Text="✓" Foreground="#8461B0" FontSize="17" FontWeight="Bold" Visibility="Collapsed" VerticalAlignment="Center" HorizontalAlignment="Right"/>
      <TextBlock x:Name="SubmenuArrow" Grid.Column="1" Text="›" Foreground="#9C80B6" FontSize="22" Visibility="Collapsed" VerticalAlignment="Center" HorizontalAlignment="Right"/>
+     <Path x:Name="OpenWindowGlyph" Grid.Column="1" Data="M 4,3 L 1,3 L 1,13 L 11,13 L 11,10 M 7,1 L 13,1 L 13,7 M 13,1 L 6,8" Width="14" Height="14" Stretch="Uniform" Stroke="#9C80B6" StrokeThickness="1.4" StrokeLineJoin="Round" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Visibility="Collapsed" VerticalAlignment="Center" HorizontalAlignment="Right"/>
     </Grid>
    </Border>
    <Popup x:Name="PART_Popup" Placement="{Binding Tag, RelativeSource={RelativeSource TemplatedParent}, FallbackValue=Right, TargetNullValue=Right}" PlacementTarget="{Binding ElementName=ItemBody}" IsOpen="{Binding IsSubmenuOpen, RelativeSource={RelativeSource TemplatedParent}}" AllowsTransparency="True" Focusable="False" PopupAnimation="Fade">
@@ -73,6 +74,7 @@ function Initialize-WidgetSettingsMenu {
     <Trigger Property="IsChecked" Value="True"><Setter TargetName="CheckMark" Property="Visibility" Value="Visible"/></Trigger>
     <Trigger Property="Uid" Value="radio"><Setter TargetName="CheckMark" Property="Text" Value="●"/><Setter TargetName="CheckMark" Property="FontSize" Value="14"/></Trigger>
     <Trigger Property="HasItems" Value="True"><Setter TargetName="SubmenuArrow" Property="Visibility" Value="Visible"/></Trigger>
+    <Trigger Property="Uid" Value="open-window"><Setter TargetName="OpenWindowGlyph" Property="Visibility" Value="Visible"/></Trigger>
     <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.5"/></Trigger>
    </ControlTemplate.Triggers>
   </ControlTemplate></Setter.Value></Setter>
@@ -99,10 +101,30 @@ function Initialize-WidgetSettingsMenu {
   </Grid></ControlTemplate></Setter.Value></Setter>
   <Style.Triggers><Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.4"/></Trigger></Style.Triggers>
  </Style>
+ <Style x:Key="LavenderScrollThumb" TargetType="Thumb">
+  <Setter Property="MinHeight" Value="28"/><Setter Property="Cursor" Value="Hand"/>
+  <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Thumb">
+   <Border x:Name="ThumbBody" Background="#C6B0DD" CornerRadius="4" Margin="1,0"/>
+   <ControlTemplate.Triggers>
+    <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="ThumbBody" Property="Background" Value="#A98CC5"/></Trigger>
+    <Trigger Property="IsDragging" Value="True"><Setter TargetName="ThumbBody" Property="Background" Value="#9170B5"/></Trigger>
+   </ControlTemplate.Triggers>
+  </ControlTemplate></Setter.Value></Setter>
+ </Style>
+ <Style TargetType="ScrollBar">
+  <Setter Property="Width" Value="8"/><Setter Property="MinWidth" Value="8"/><Setter Property="MaxWidth" Value="8"/><Setter Property="Margin" Value="6,0,0,0"/>
+  <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ScrollBar">
+   <Border Background="#F0E8F6" CornerRadius="4"><Track x:Name="PART_Track" Orientation="Vertical" IsDirectionReversed="True" Minimum="{TemplateBinding Minimum}" Maximum="{TemplateBinding Maximum}" Value="{TemplateBinding Value}" ViewportSize="{TemplateBinding ViewportSize}">
+    <Track.DecreaseRepeatButton><RepeatButton Command="ScrollBar.PageUpCommand" Focusable="False"><RepeatButton.Template><ControlTemplate TargetType="RepeatButton"><Border Background="Transparent"/></ControlTemplate></RepeatButton.Template></RepeatButton></Track.DecreaseRepeatButton>
+    <Track.Thumb><Thumb Style="{StaticResource LavenderScrollThumb}"/></Track.Thumb>
+    <Track.IncreaseRepeatButton><RepeatButton Command="ScrollBar.PageDownCommand" Focusable="False"><RepeatButton.Template><ControlTemplate TargetType="RepeatButton"><Border Background="Transparent"/></ControlTemplate></RepeatButton.Template></RepeatButton></Track.IncreaseRepeatButton>
+   </Track></Border>
+  </ControlTemplate></Setter.Value></Setter>
+ </Style>
 </ResourceDictionary>
 '@)
+  $script:settingsMenuResources[[Windows.SystemParameters]::VerticalScrollBarWidthKey]=[double]8
   $script:settingsMenuSync=$false;$script:settingsMenuUi=@{};$script:settingsSubmenus=@()
-  $script:settingsSizePreview=$false;$script:settingsBubblePreview=$false
   $script:context=New-Object Windows.Controls.ContextMenu
   $script:context.FontFamily=[Windows.Media.FontFamily]::new('Microsoft YaHei UI');$script:context.FontSize=14.5;$script:context.Width=328
   $script:context.MaxHeight=[Math]::Max(360,[Math]::Min(730,[Windows.SystemParameters]::WorkArea.Height-28))
@@ -114,12 +136,25 @@ function Initialize-WidgetSettingsMenu {
 <ControlTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" TargetType="ContextMenu"><Border Background="#FFFCFF" BorderBrush="#DFD1EC" BorderThickness="1" CornerRadius="12" Padding="9,8"><ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" CanContentScroll="False"><ItemsPresenter/></ScrollViewer></Border></ControlTemplate>
 '@)
   $script:settingsMenuUi.Bubble=Add-SettingsAction '查看额度' {if(!$script:collapsed -and $script:bubbleMode-eq 'quota'){Hide-Quota}else{Show-Quota}} -ReturnItem
+  $script:settingsMenuUi.Quote=Add-SettingsAction '换一句台词' {if($script:collapsed){Show-Quota};Switch-Scene 'quote'} -ReturnItem
   Add-SettingsAction '刷新额度' {Request-Refresh}
-  $script:settingsMenuUi.Quote=Add-SettingsAction '换一句台词' {Show-Quote} -ReturnItem
+  Add-SettingsAction '编辑我的语录' {Open-QuoteEditor}
   Add-SettingsDivider
-  $script:settingsMenuUi.Character=Add-SettingsAction '更换形象' {Open-WidgetCharacterGallery} -ReturnItem
-  $script:settingsMenuUi.Character.ToolTip='选择形象或添加电脑上的图片'
+  $script:settingsMenuUi.Display=Add-SettingsSubmenu '显示与位置' {
+  $script:settingsMenuUi.Follow=Add-SettingsAction '仅在 Codex 窗口内' {Set-WidgetFollowHost $true;Update-WidgetSettingsMenu;Set-WidgetMenuBounds;Position-WidgetMenuToHost} -Checkable -ReturnItem
+  $script:settingsMenuUi.Follow.Uid='radio'
+  $script:settingsMenuUi.Desktop=Add-SettingsAction '整个桌面自由拖动' {Set-WidgetFollowHost $false;Update-WidgetSettingsMenu;Set-WidgetMenuBounds;Position-WidgetMenuToHost} -Checkable -ReturnItem
+  $script:settingsMenuUi.Desktop.Uid='radio'
+  $script:settingsMenuUi.TopmostDivider=Add-SettingsDivider -ReturnItem
+  $script:settingsMenuUi.Topmost=Add-SettingsAction '始终置顶' {param($sender,$event)if($script:followHost){Update-WidgetSettingsMenu;return};$script:desktopTopmost=[bool]$sender.IsChecked;Save-Settings;Tick-Widget} -Checkable -ReturnItem
+  Add-SettingsDivider
+  Add-SettingsAction '恢复右下角位置' {if($script:followHost){$script:offsetRight=0;$script:offsetLeft=0;$script:offsetBottom=0;$script:anchor='right'}else{$script:desktopLeft=$null;$script:desktopTop=$null};$script:side='right';$script:lastPosition=$null;Set-Facing;Hide-Quota;Save-Settings;Tick-Widget} -StayOpen
+  } -ReturnItem
   $script:settingsMenuUi.Appearance=Add-SettingsSubmenu '外观设置' {
+  $script:settingsMenuUi.Character=Add-SettingsAction '切换形象' {Open-WidgetCharacterGallery} -ReturnItem
+  $script:settingsMenuUi.Character.Uid='open-window'
+  $script:settingsMenuUi.Character.ToolTip='打开角色图库'
+  Add-SettingsDivider
   $presets=New-Object Windows.Controls.Primitives.UniformGrid;$presets.Columns=3;$presets.Margin=[Windows.Thickness]::new(0,1,0,2);$script:settingsMenuUi.SizeButtons=@()
   foreach($choice in @(@{label='小 · 80%';scale=0.8},@{label='标准 · 100%';scale=1.0},@{label='大 · 140%';scale=1.4})){
     $button=New-Object Windows.Controls.Button;$button.Content=$choice.label;$button.Tag=$choice.scale;$button.Margin=[Windows.Thickness]::new(0,0,5,0);$button.Style=$script:settingsMenuResources['SettingsPreset']
@@ -127,17 +162,10 @@ function Initialize-WidgetSettingsMenu {
     $presets.Children.Add($button)|Out-Null;$script:settingsMenuUi.SizeButtons+=,$button
   }
   Add-SettingsPanel $presets
-  $size=New-SettingsSlider '人物大小' 0.6 2.5 0.1
+  $size=New-SettingsSlider '挂件大小' 0.6 2.5 0.1
   $script:sizeSlider=$size.Slider;$script:settingsMenuUi.SizeText=$size.Value;$size.Slider.Value=$script:scale
   $size.Slider.Add_ValueChanged({param($sender,$event)if($script:settingsMenuSync){return};$script:scale=[Math]::Round($sender.Value,1);$script:settingsMenuUi.SizeText.Text=([Math]::Round($script:scale*100)).ToString()+'%';Update-WidgetSizePresets;Set-Appearance;Save-Settings})
-  Register-WidgetSizePreview $size.Slider
   Add-SettingsPanel $size.Panel
-  if($null-eq $script:bubbleScale){$script:bubbleScale=$script:scale}
-  $bubbleSize=New-SettingsSlider '气泡大小' 0.6 2.5 0.1
-  $script:bubbleSizeSlider=$bubbleSize.Slider;$script:settingsMenuUi.BubbleSizeText=$bubbleSize.Value;$bubbleSize.Slider.Value=$script:bubbleScale
-  $bubbleSize.Slider.Add_ValueChanged({param($sender,$event)if($script:settingsMenuSync){return};$script:bubbleScale=[Math]::Round($sender.Value,1);$script:settingsMenuUi.BubbleSizeText.Text=([Math]::Round($script:bubbleScale*100)).ToString()+'%';Set-Appearance;Save-Settings})
-  Register-WidgetSizePreview $bubbleSize.Slider
-  Add-SettingsPanel $bubbleSize.Panel
   $script:settingsMenuUi.Hide=Add-SettingsAction '隐藏设置按钮' {param($sender,$event)$script:hideMenu=$sender.IsChecked;Set-MenuVisible $false;Save-Settings} -Description '仍可右键点角色打开设置' -Checkable -ReturnItem
   } -ReturnItem
   $script:settingsMenuUi.Colors=Add-SettingsSubmenu '配色效果' {
@@ -171,51 +199,9 @@ function Initialize-WidgetSettingsMenu {
   $volume.Slider.Add_ValueChanged({param($sender,$event)if($script:settingsMenuSync){return};$script:soundVolume=[Math]::Round($sender.Value,2);$script:settingsMenuUi.VolumeText.Text=([Math]::Round($sender.Value*100)).ToString()+'%';Set-WidgetAudioVolume;Save-Settings})
   Add-SettingsPanel $volume.Panel
   Add-SettingsDivider
-  $script:settingsMenuUi.AudioBuiltin=Add-SettingsAction '使用内置音效' {Invoke-WidgetAudioAction 'builtin'} -Checkable -ReturnItem
-  $script:settingsMenuUi.AudioCustom=Add-SettingsAction '使用自定义音效' {Invoke-WidgetAudioAction 'custom'} -Checkable -ReturnItem
-  $script:settingsMenuUi.AudioBuiltin.Uid='radio';$script:settingsMenuUi.AudioCustom.Uid='radio'
-  foreach($phase in @(@{id='press';label='自定义按下音效'},@{id='release';label='自定义松开音效'})){
-    $id=$phase.id
-    $submenu=Add-SettingsSubmenu $phase.label {
-      $label=Add-SettingsAction '未设置（无声）' {} -ReturnItem;$label.IsEnabled=$false
-      $choose=Add-SettingsAction '选择WAV…（最长5秒）' {param($sender,$event)Invoke-WidgetAudioAction 'import' $sender.Tag} -ReturnItem;$choose.Tag=$id
-      $clear=Add-SettingsAction '设为无声' {param($sender,$event)Invoke-WidgetAudioAction 'clear' $sender.Tag} -ReturnItem;$clear.Tag=$id
-      $preview=Add-SettingsAction '试听' {param($sender,$event)Invoke-WidgetAudioAction 'preview' $sender.Tag} -ReturnItem;$preview.Tag=$id
-      $script:settingsMenuUi['AudioName_'+$id]=$label;$script:settingsMenuUi['AudioPreview_'+$id]=$preview
-    } -ReturnItem
-    $script:settingsMenuUi['AudioSlot_'+$id]=$submenu
-  }
-  Add-SettingsDivider
   $script:settingsMenuUi.Tap=Add-SettingsAction '点角色也切换内容' {param($sender,$event)$script:bubbleTapAdvance=$sender.IsChecked;Save-Settings} -Description '开启后，连续点角色就能看下一句' -Checkable -ReturnItem
   } -ReturnItem
-  Add-SettingsAction '编辑我的语录' {Open-QuoteEditor}
-  $script:settingsMenuUi.MusicEnabled=Add-SettingsAction '音乐律动' {param($sender,$event)Set-WidgetMusicEnabled ([bool]$sender.IsChecked);$script:context.IsOpen=$false} -Checkable -ReturnItem
-  $script:settingsMenuUi.MusicEnabled.ToolTip='先听几拍确认节奏，再跟拍。拿起时按设置的双倍概率决定人物是否变色；拖动后松手可甩出，碰边反弹、落地继续跟拍。关闭后恢复原位置。'
-  $script:settingsMenuUi.AutoQuotes=Add-SettingsSubmenu '自动语录' {
-    $script:settingsMenuUi.AutoQuoteEnabled=Add-SettingsAction '开启自动语录' {param($sender,$event)Set-WidgetAutoQuoteSettings ([bool]$sender.IsChecked) $script:autoQuoteIntervalSeconds;Update-WidgetSettingsMenu} -Checkable -ReturnItem
-    Add-SettingsDivider
-    $script:settingsMenuUi.AutoQuoteIntervals=@()
-    foreach($seconds in @(60,300,900)){
-      $choice=Add-SettingsAction (([string]($seconds/60))+' 分钟') {param($sender,$event)Set-WidgetAutoQuoteSettings $script:autoQuoteEnabled ([int]$sender.Tag);Update-WidgetSettingsMenu} -Checkable -ReturnItem
-      $choice.Tag=$seconds;$choice.Uid='radio';$script:settingsMenuUi.AutoQuoteIntervals+=,$choice
-    }
-    $hint=New-SettingsText '空闲时才弹出。操作或重新显示后重新计时，约 5 秒收起。' 11.5 '#927AAB'
-    $hint.TextWrapping=[Windows.TextWrapping]::Wrap;$hint.Margin=[Windows.Thickness]::new(0,8,0,0)
-    Add-SettingsPanel $hint -Passive
-  } -ReturnItem
-  $script:settingsMenuUi.Completion=Add-SettingsAction '回答结束提醒' {param($sender,$event)Set-CompletionNotificationEnabled ([bool]$sender.IsChecked);Update-WidgetSettingsMenu} -Checkable -ReturnItem
-  $script:settingsMenuUi.Completion.ToolTip='回答结束后在当前位置提醒；后台时临时置顶，显示后恢复'
   Add-SettingsDivider
-  $script:settingsMenuUi.Display=Add-SettingsSubmenu '显示与位置' {
-  $script:settingsMenuUi.Follow=Add-SettingsAction '仅在 Codex 窗口内' {Set-WidgetFollowHost $true;Update-WidgetSettingsMenu;Set-WidgetMenuBounds;Position-WidgetMenuToHost} -Checkable -ReturnItem
-  $script:settingsMenuUi.Follow.Uid='radio'
-  $script:settingsMenuUi.Desktop=Add-SettingsAction '整个桌面自由拖动' {Set-WidgetFollowHost $false;Update-WidgetSettingsMenu;Set-WidgetMenuBounds;Position-WidgetMenuToHost} -Checkable -ReturnItem
-  $script:settingsMenuUi.Desktop.Uid='radio'
-  $script:settingsMenuUi.TopmostDivider=Add-SettingsDivider -ReturnItem
-  $script:settingsMenuUi.Topmost=Add-SettingsAction '始终置顶' {param($sender,$event)if($script:followHost){Update-WidgetSettingsMenu;return};$script:desktopTopmost=[bool]$sender.IsChecked;Save-Settings;Tick-Widget} -Checkable -ReturnItem
-  Add-SettingsDivider
-  Add-SettingsAction '恢复右下角位置' {if($script:followHost){$script:offsetRight=0;$script:offsetLeft=0;$script:offsetBottom=0;$script:anchor='right'}else{$script:desktopLeft=$null;$script:desktopTop=$null};$script:side='right';$script:lastPosition=$null;Set-Facing;Hide-Quota;Save-Settings;Tick-Widget} -StayOpen
-  } -ReturnItem
   $script:settingsMenuUi.Updates=Add-SettingsSubmenu '更新' {
     $script:settingsMenuUi.UpdateVersion=Add-SettingsAction '当前版本' {} -ReturnItem;$script:settingsMenuUi.UpdateVersion.IsEnabled=$false
     Add-SettingsAction '检查并更新' {Start-WidgetUpdate 'manual'}
@@ -225,10 +211,7 @@ function Initialize-WidgetSettingsMenu {
   } -ReturnItem
   Add-SettingsDivider
   $exit=Add-SettingsAction '退出 GPT 娘' {Exit-WidgetForSession} -ReturnItem;$exit.Foreground=[Windows.Media.BrushConverter]::new().ConvertFromString('#A1788D')
-  $script:context.Add_Opened({Pause-CompletionNotification;Reset-WidgetAutoQuoteSchedule;Update-WidgetSettingsMenu;Set-WidgetMenuBounds;Position-WidgetMenuToHost})
-  $script:context.Add_Closed({Reset-WidgetAutoQuoteSchedule;Set-WidgetSizePreview $false})
-  Initialize-SettingsMenuDismiss
-  Update-WidgetSettingsMenu;$script:window.ContextMenu=$script:context
+  $script:context.Add_Opened({Update-WidgetSettingsMenu;Set-WidgetMenuBounds;Position-WidgetMenuToHost});Update-WidgetSettingsMenu;$script:window.ContextMenu=$script:context
 }
 
 function New-SettingsText([string]$Text,[double]$Size,[string]$Color){$t=New-Object Windows.Controls.TextBlock;$t.Text=$Text;$t.FontSize=$Size;$t.Foreground=[Windows.Media.BrushConverter]::new().ConvertFromString($Color);return $t}
@@ -267,11 +250,7 @@ function Update-WidgetSettingsMenu{
   $script:settingsMenuSync=$true
   try{
     Update-WidgetUpdateMenu
-    $script:settingsMenuUi.MusicEnabled.IsChecked=Test-WidgetMusicActive
-    $script:settingsMenuUi.Completion.IsChecked=$script:completionNotificationsEnabled
-    $script:settingsMenuUi.AutoQuoteEnabled.IsChecked=$script:autoQuoteEnabled
-    foreach($choice in $script:settingsMenuUi.AutoQuoteIntervals){$choice.IsChecked=[int]$choice.Tag-eq $script:autoQuoteIntervalSeconds}
-    if($script:settingsMenuUi.Character){$script:settingsMenuUi.Character.ToolTip=if($script:activeCharacter){'当前形象：'+$script:activeCharacter.name}else{'选择形象或添加电脑上的图片'}}
+    if($script:settingsMenuUi.Character){$script:settingsMenuUi.Character.Header=if($script:activeCharacter){'形象：'+$script:activeCharacter.name}else{'切换形象'}}
     $script:settingsMenuUi.Bubble.Header=if(!$script:collapsed -and $script:bubbleMode-eq 'quota'){'收起额度气泡'}else{'查看额度'}
     $script:settingsMenuUi.Follow.IsChecked=$script:followHost;$script:settingsMenuUi.Desktop.IsChecked=!$script:followHost
     $script:settingsMenuUi.Topmost.IsChecked=$script:desktopTopmost;$script:settingsMenuUi.Topmost.IsEnabled=!$script:followHost
@@ -285,18 +264,8 @@ function Update-WidgetSettingsMenu{
     $script:settingsMenuUi.ColorTextChance.Value=$script:colorTextChance;$script:settingsMenuUi.ColorTextChanceText.Text=$script:colorTextChance.ToString()+'%';$script:settingsMenuUi.ColorTextChance.IsEnabled=$script:colorMode-eq 'mixed'
     $script:settingsMenuUi.ColorTriggerList.IsEnabled=$script:colorMode-in @('special','surprise')
     $script:settingsMenuUi.ColorPause.IsChecked=$script:colorPaused;$script:settingsMenuUi.ColorPause.IsEnabled=$script:colorMode-ne 'original'
-    $audio=Get-WidgetAudioStatus
-    $script:settingsMenuUi.AudioBuiltin.IsChecked=$audio.mode-eq 'builtin';$script:settingsMenuUi.AudioCustom.IsChecked=$audio.mode-eq 'custom'
-    foreach($phase in @('press','release')){
-      $entry=$audio[$phase]
-      $script:settingsMenuUi['AudioName_'+$phase].Header=if($entry.configured){if($entry.available){$entry.name}else{'文件不可用：'+$entry.name}}else{'未设置（无声）'}
-      $script:settingsMenuUi['AudioName_'+$phase].ToolTip=$script:settingsMenuUi['AudioName_'+$phase].Header
-      $script:settingsMenuUi['AudioPreview_'+$phase].IsEnabled=[bool]$entry.configured -and $script:soundOn -and $script:soundVolume-gt 0
-      $script:settingsMenuUi['AudioPreview_'+$phase].ToolTip='试听遵循当前声音开关与音量'
-    }
     $script:settingsMenuUi.Volume.Value=$script:soundVolume;$script:settingsMenuUi.Volume.IsEnabled=$script:soundOn;$script:settingsMenuUi.VolumeText.Text=([Math]::Round($script:soundVolume*100)).ToString()+'%'
     $script:sizeSlider.Value=$script:scale;$script:settingsMenuUi.SizeText.Text=([Math]::Round($script:scale*100)).ToString()+'%';Update-WidgetSizePresets
-    $script:bubbleSizeSlider.Value=$script:bubbleScale;$script:settingsMenuUi.BubbleSizeText.Text=([Math]::Round($script:bubbleScale*100)).ToString()+'%'
   }finally{$script:settingsMenuSync=$false}
 }
 
@@ -315,7 +284,7 @@ function Set-WidgetMenuBounds {
   foreach($submenu in $script:settingsSubmenus){$submenu.Tag=if($script:side-eq 'left'){[Windows.Controls.Primitives.PlacementMode]::Right}else{[Windows.Controls.Primitives.PlacementMode]::Left}}
   try{
     if(!$script:followHost -or ($script:hostHandle-ne [IntPtr]::Zero -and [GptWidgetNative]::IsWindow($script:hostHandle))){
-      $frame=if($script:followHost){Get-WidgetVisibleFrame}else{Get-WidgetPlacementFrame};$dpi=Get-WidgetPlacementDpi
+      $frame=Get-WidgetPlacementFrame;$dpi=Get-WidgetPlacementDpi
       $script:context.Width=[Math]::Max(180,[Math]::Min(328,($frame.Right-$frame.Left)/$dpi-16))
       $script:context.MaxHeight=[Math]::Max(160,[Math]::Min(730,($frame.Bottom-$frame.Top)/$dpi-16))
       $script:context.Resources['SettingsSubmenuWidth']=[double][Math]::Max(180,[Math]::Min(300,($frame.Right-$frame.Left)/$dpi-16))
@@ -324,50 +293,15 @@ function Set-WidgetMenuBounds {
   }catch{}
 }
 
-function Set-WidgetSizePreview([bool]$Active,[bool]$PreviewBubble=$false) {
-  $wasActive=[bool]$script:settingsSizePreview
-  if($Active -and !$wasActive -and $script:resetPhaseTimer){$script:resetPhaseTimer.Stop()}
-  if($Active -and $PreviewBubble -and !$script:settingsBubblePreview){
-    # Preview changes only visibility; the user's collapsed preference stays intact.
-    $script:settingsBubblePreview=$true
-    if($script:resetPhaseTimer){$script:resetPhaseTimer.Stop()}
-    Set-BubbleState
-  }
-  if(!$Active -and $script:settingsBubblePreview){
-    $script:settingsBubblePreview=$false
-    Set-BubbleState
-  }
-  $script:settingsSizePreview=$Active
-  if(!$Active -and $wasActive -and !$script:collapsed){Restart-SceneTtl}
-  $opacity=if($Active){0.08}else{1.0}
-  $script:context.Opacity=$opacity
-  foreach($submenu in $script:settingsSubmenus){
-    if(!$submenu.Template){continue}
-    $popup=$submenu.Template.FindName('PART_Popup',$submenu)
-    if($popup -and $popup.Child){$popup.Child.Opacity=$opacity}
-  }
-  if(!$Active){Position-WidgetMenuToHost}
-}
-
-function Register-WidgetSizePreview($Slider) {
-  $Slider.Add_PreviewKeyDown({param($sender,$event)if($event.Key-eq [Windows.Input.Key]::Escape){Set-WidgetSizePreview $false}})
-  $Slider.Add_Unloaded({Set-WidgetSizePreview $false})
-  $Slider.Add_PreviewMouseLeftButtonDown({param($sender,$event)Set-WidgetSizePreview $true ($sender-eq $script:bubbleSizeSlider)})
-  $Slider.AddHandler([Windows.Controls.Primitives.Thumb]::DragStartedEvent,[Windows.Controls.Primitives.DragStartedEventHandler]{param($sender,$event)Set-WidgetSizePreview $true ($sender-eq $script:bubbleSizeSlider)})
-  $Slider.AddHandler([Windows.Controls.Primitives.Thumb]::DragCompletedEvent,[Windows.Controls.Primitives.DragCompletedEventHandler]{param($sender,$event)Set-WidgetSizePreview $false})
-  $Slider.AddHandler([Windows.UIElement]::PreviewMouseLeftButtonUpEvent,[Windows.Input.MouseButtonEventHandler]{param($sender,$event)Set-WidgetSizePreview $false},$true)
-  $Slider.AddHandler([Windows.UIElement]::LostMouseCaptureEvent,[Windows.Input.MouseEventHandler]{param($sender,$event)Set-WidgetSizePreview $false},$true)
-}
-
 function Position-WidgetMenuToHost {
   # Move only our own popup; host geometry is read-only.
-  if(!$script:context.IsOpen -or $script:settingsSizePreview){return}
+  if(!$script:context.IsOpen){return}
   try{
     if($script:followHost -and ($script:hostHandle-eq [IntPtr]::Zero -or ![GptWidgetNative]::IsWindow($script:hostHandle))){return}
     $script:context.UpdateLayout()
     $source=[Windows.Interop.HwndSource]::FromVisual($script:context)
     if(!$source -or $source.Handle-eq [IntPtr]::Zero){return}
-    $frame=if($script:followHost){Get-WidgetVisibleFrame}else{Get-WidgetPlacementFrame};$menu=[GptWidgetNative]::Frame($source.Handle)
+    $frame=Get-WidgetPlacementFrame;$menu=[GptWidgetNative]::Frame($source.Handle)
     $dpi=Get-WidgetPlacementDpi
     $margin=[int][Math]::Round(8*$dpi);$width=$menu.Right-$menu.Left;$height=$menu.Bottom-$menu.Top
     $origin=$script:ui.MenuButton.PointToScreen([Windows.Point]::new(0,0))
@@ -377,73 +311,4 @@ function Position-WidgetMenuToHost {
     $y=[int][Math]::Round([Math]::Max($frame.Top+$margin,[Math]::Min($frame.Bottom-$height-$margin,$origin.Y)))
     if($menu.Left-ne $x -or $menu.Top-ne $y){[GptWidgetNative]::SetWindowPos($source.Handle,[IntPtr]::Zero,$x,$y,0,0,0x15)|Out-Null}
   }catch{}
-}
-
-# Outside-click dismissal adapted from PR #46; keep it with the existing menu.
-# The widget is non-activating; focus loss alone cannot dismiss its menu.
-# Observe button edges only while open. Never hook or consume mouse input.
-$script:settingsMenuPointerMask=0
-function Get-SettingsMenuPointer {
-  $point=New-Object GptSettingsMenuPointer+Point
-  $ok=[GptSettingsMenuPointer]::GetCursorPos([ref]$point)
-  $mask=0
-  if(([GptSettingsMenuPointer]::GetAsyncKeyState(1)-band 0x8000)-ne 0){$mask=$mask-bor 1}
-  if(([GptSettingsMenuPointer]::GetAsyncKeyState(2)-band 0x8000)-ne 0){$mask=$mask-bor 2}
-  if(([GptSettingsMenuPointer]::GetAsyncKeyState(4)-band 0x8000)-ne 0){$mask=$mask-bor 4}
-  return @{Valid=$ok;X=$point.X;Y=$point.Y;Mask=$mask}
-}
-function Test-SettingsMenuOutsidePress($Pointer,[int]$PreviousMask,$Bounds) {
-  if(!$Pointer.Valid -or (($Pointer.Mask-band (-bnot $PreviousMask))-eq 0)){return $false}
-  if(@($Bounds).Count-eq 0){return $false}
-  foreach($rect in $Bounds){
-    if($Pointer.X-ge $rect.Left -and $Pointer.X-lt $rect.Right -and $Pointer.Y-ge $rect.Top -and $Pointer.Y-lt $rect.Bottom){return $false}
-  }
-  return $true
-}
-function Get-SettingsMenuBounds {
-  $visuals=@($script:context)
-  foreach($item in $script:settingsSubmenus){
-    if($item.IsSubmenuOpen -and $item.Template){
-      $popup=$item.Template.FindName('PART_Popup',$item)
-      if($popup -and $popup.IsOpen -and $popup.Child){$visuals+=,$popup.Child}
-    }
-  }
-  foreach($visual in $visuals){
-    try{
-      if(!$visual.IsVisible -or $visual.ActualWidth-le 0 -or $visual.ActualHeight-le 0){continue}
-      # Physical coordinates include DPI and negative-coordinate monitors.
-      $a=$visual.PointToScreen([Windows.Point]::new(0,0))
-      $b=$visual.PointToScreen([Windows.Point]::new($visual.ActualWidth,$visual.ActualHeight))
-      @{Left=$a.X;Top=$a.Y;Right=$b.X;Bottom=$b.Y}
-    }catch{}
-  }
-}
-function Invoke-SettingsMenuDismissTick {
-  if(!$script:context.IsOpen){$script:settingsMenuDismissTimer.Stop();return}
-  $pointer=Get-SettingsMenuPointer
-  $previous=$script:settingsMenuPointerMask
-  $script:settingsMenuPointerMask=$pointer.Mask
-  if(Test-SettingsMenuOutsidePress $pointer $previous @(Get-SettingsMenuBounds)){$script:context.IsOpen=$false}
-}
-function Initialize-SettingsMenuDismiss {
-  if(-not ('GptSettingsMenuPointer' -as [type])){
-    Add-Type @'
-using System;
-using System.Runtime.InteropServices;
-public static class GptSettingsMenuPointer {
-  [StructLayout(LayoutKind.Sequential)] public struct Point { public int X,Y; }
-  [DllImport("user32.dll")] public static extern bool GetCursorPos(out Point p);
-  [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int key);
-}
-'@
-  }
-  $script:context.StaysOpen=$false
-  $script:settingsMenuDismissTimer=New-Object Windows.Threading.DispatcherTimer([Windows.Threading.DispatcherPriority]::Input)
-  $script:settingsMenuDismissTimer.Interval=[TimeSpan]::FromMilliseconds(16)
-  $script:settingsMenuDismissTimer.Add_Tick({Invoke-SettingsMenuDismissTick})
-  $script:context.Add_Opened({
-    $script:settingsMenuPointerMask=(Get-SettingsMenuPointer).Mask
-    $script:settingsMenuDismissTimer.Start()
-  })
-  $script:context.Add_Closed({$script:settingsMenuDismissTimer.Stop();$script:settingsMenuPointerMask=0})
 }

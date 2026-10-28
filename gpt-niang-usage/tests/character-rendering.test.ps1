@@ -17,7 +17,6 @@ function Render-CharacterScene($Source,[double]$Scale=0.6,[double]$DpiScale=1,[s
     $viewport=$window.Content
     $viewport.Measure([Windows.Size]::new($dipSize,$dipSize))
     $viewport.Arrange([Windows.Rect]::new(0,0,$dipSize,$dipSize));$viewport.UpdateLayout()
-    $script:lastCharacterSlotCenter=$girl.TranslatePoint([Windows.Point]::new($girl.ActualWidth/2,$girl.ActualHeight/2),$viewport)
     $render=[Windows.Media.Imaging.RenderTargetBitmap]::new($pixelSize,$pixelSize,96*$DpiScale,96*$DpiScale,[Windows.Media.PixelFormats]::Pbgra32)
     $render.Render($viewport);$render.Freeze();return $render
   }finally{$window.Close()}
@@ -81,10 +80,8 @@ foreach($scale in @(0.6,0.8,1.4)){
       $image=Render-CharacterScene $shape.source $scale $dpi;$bounds=Get-AlphaBounds $image
       $factor=$scale*$dpi;$expectedWidth=$shape.width*$factor;$expectedHeight=$shape.height*$factor
       if([Math]::Abs($bounds.Width-$expectedWidth)-gt 2 -or [Math]::Abs($bounds.Height-$expectedHeight)-gt 2){throw ('{0} character is cropped or stretched at scale {1}, DPI {2}: {3}x{4}' -f $shape.name,$scale,$dpi,$bounds.Width,$bounds.Height)}
-      # WPF rounds layout in device units; compare the rendered pixels with the
-      # measured image slot rather than an ideal, unrounded Viewbox coordinate.
-      $expectedCenter=$script:lastCharacterSlotCenter
-      if([Math]::Abs(($bounds.Left+$bounds.Right+1)/2-$expectedCenter.X*$dpi)-gt 2 -or [Math]::Abs(($bounds.Top+$bounds.Bottom+1)/2-$expectedCenter.Y*$dpi)-gt 2){throw ('{0} character is not centered inside the measured image slot at scale {1}, DPI {2}' -f $shape.name,$scale,$dpi)}
+      $expectedCenter=(14+142+104)*$factor
+      if([Math]::Abs(($bounds.Left+$bounds.Right+1)/2-$expectedCenter)-gt 2 -or [Math]::Abs(($bounds.Top+$bounds.Bottom+1)/2-$expectedCenter)-gt 2){throw ('{0} character is not centered inside the image slot' -f $shape.name)}
       $cases++
     }
   }

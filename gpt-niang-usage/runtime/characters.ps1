@@ -104,23 +104,6 @@ function Read-WidgetCharacterImage([string]$Path) {
 function Import-WidgetCharacter([string]$DataDir,[string]$SourcePath) {
   # Validate fully before creating or changing user data.
   $image=Read-WidgetCharacterImage $SourcePath
-  # Stored copies only need display resolution. A bounded lossless copy keeps
-  # the normalized PNG inside the same 20 MB reader limit and keeps gallery
-  # decoding and activation memory predictable instead of storing 12 MP photos.
-  $longest=[Math]::Max($image.PixelWidth,$image.PixelHeight)
-  if($longest-gt 2048){
-    $ratio=2048.0/$longest
-    $scaled=[Windows.Media.Imaging.TransformedBitmap]::new($image,[Windows.Media.ScaleTransform]::new($ratio,$ratio))
-    $scaled.Freeze();$image=$scaled
-  }
-  # A fully transparent picture passes every file check but would make the whole
-  # widget click-through, so reject it while the decoded pixels are available.
-  $probe=[Windows.Media.Imaging.TransformedBitmap]::new($image,[Windows.Media.ScaleTransform]::new(32.0/$image.PixelWidth,32.0/$image.PixelHeight))
-  $probePixels=New-Object byte[] ($probe.PixelWidth*$probe.PixelHeight*4)
-  $probe.CopyPixels($probePixels,$probe.PixelWidth*4,0)
-  $visible=$false
-  for($i=3;$i-lt $probePixels.Length;$i+=4){if($probePixels[$i]-gt 10){$visible=$true;break}}
-  if(!$visible){throw '图片没有可见像素，请换一张有内容的图片。'}
   $catalogPath=Join-Path $DataDir 'characters.json'
   $catalog=Read-WidgetCharacterCatalog $catalogPath
   $directory=Join-Path $DataDir 'characters'
@@ -139,10 +122,6 @@ function Import-WidgetCharacter([string]$DataDir,[string]$SourcePath) {
     $encoder.Frames.Add([Windows.Media.Imaging.BitmapFrame]::Create($image))
     $encoder.Save($stream);$stream.Dispose();$stream=$null
     [IO.File]::Move($imageTemp,$path);$created=$true
-    # Re-read the committed file with the same guard used for every catalog
-    # image, so a committed import can never point at an image that cannot be
-    # activated later.
-    $null=Read-WidgetCharacterImage $path
     $catalog.characters=@($catalog.characters)+@($entry)
     Write-WidgetCharacterCatalog $catalogPath $catalog
     $created=$false

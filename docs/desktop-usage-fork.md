@@ -1,6 +1,6 @@
 # Windows desktop usage fork
 
-This branch is based on upstream GPT-Niang 1.3.5. Its Windows quota worker reads
+This branch is based on the previously installed Windows character-library version 1.3.4. Its Windows quota worker reads
 the account usage returned by the already-running Codex desktop application.
 It does not launch `codex app-server`, start a conversation, call a model, or
 read authentication tokens. The existing Windows character library, settings,
@@ -37,6 +37,8 @@ Codex task to replace the binding.
 The normal updater already refuses to replace Git source checkouts with official
 release archives. Update this branch with Git to retain the desktop reader.
 Keep existing user preferences in the application's state directory.
+
+The 1.3.5 upgrade and the unmerged PR #42 audio experiment were withdrawn at the user's request. The original 1.3.4 waveOut player is restored.
 
 This branch currently targets Windows desktop use. The named-pipe discovery
 does not provide a standalone macOS backend. Upstream remains the source of the

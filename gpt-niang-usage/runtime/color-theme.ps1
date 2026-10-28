@@ -165,16 +165,6 @@ function Set-WidgetColorPalette([string]$Name,[switch]$Immediate){
   }
   $script:widgetColors.palette=$Name
 }
-function Sync-WidgetCharacterColors {
-  if(!$script:widgetColors -or !$script:ui.Girl){return}
-  foreach($name in @('halo','tint')){
-    $overlay=$script:widgetColors[$name]
-    if(!$overlay){continue}
-    $overlay.Width=$script:ui.Girl.Width;$overlay.Height=$script:ui.Girl.Height
-    [Windows.Controls.Canvas]::SetLeft($overlay,[Windows.Controls.Canvas]::GetLeft($script:ui.Girl))
-    [Windows.Controls.Canvas]::SetTop($overlay,[Windows.Controls.Canvas]::GetTop($script:ui.Girl))
-  }
-}
 function Initialize-WidgetColors {
   if($script:widgetColors){return}
   $script:widgetColors=@{phase=[Windows.Media.TranslateTransform]::new();brushes=@{};original=@();palette='';running=$false;active=$false;decisionKey='';lucky=$false}
@@ -210,7 +200,6 @@ function Initialize-WidgetColors {
 }
 function Update-WidgetColorScene {
   if(!$script:widgetColors){return}
-  if($script:widgetMusic -and $script:widgetMusic.Enabled){Restore-WidgetOriginalColors;return}
   $text=if($script:bubbleMode-eq 'quote'){[string]$script:ui.QuoteText.Tag}else{''}
   if(!$text -and $script:bubbleMode-eq 'quote'){$text=$script:ui.QuoteText.Text}
   $script:widgetColors.scope=Get-WidgetColorScope $text

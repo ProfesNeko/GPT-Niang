@@ -74,37 +74,6 @@ try{
   Assert-Throws {Import-WidgetCharacter $fixtureData $widePath} 'Dimension guard rejects oversized header before copy'
   Assert-Equal ([IO.File]::ReadAllText($manifestPath,[Text.Encoding]::UTF8)) $manifestBefore 'Rejected formats and dimensions leave manifest intact'
 
-  # A fully transparent picture would pass every file/format check but make the
-  # whole widget click-through, so the import must reject it before committing.
-  $transparentPath=Join-Path $testDirectory 'fully-transparent.png'
-  $transparentPixels=New-Object byte[] (4*4*4)
-  $transparentImage=[Windows.Media.Imaging.BitmapSource]::Create(4,4,96,96,[Windows.Media.PixelFormats]::Bgra32,$null,$transparentPixels,16)
-  $transparentEncoder=[Windows.Media.Imaging.PngBitmapEncoder]::new()
-  $transparentEncoder.Frames.Add([Windows.Media.Imaging.BitmapFrame]::Create($transparentImage))
-  $transparentStream=[IO.File]::Create($transparentPath);try{$transparentEncoder.Save($transparentStream)}finally{$transparentStream.Dispose()}
-  Assert-Throws {Import-WidgetCharacter $fixtureData $transparentPath} 'Fully transparent image import must fail'
-  Assert-Equal ([IO.File]::ReadAllText($manifestPath,[Text.Encoding]::UTF8)) $manifestBefore 'Transparent image import leaves the manifest intact'
-
-  # A normal phone photo is within the 20 MB source and 16 MP guards, but its
-  # lossless normalization can exceed the 20 MB reader limit. The stored copy is
-  # bounded and must stay re-readable by the same activation path.
-  $phoneWidth=4032;$phoneHeight=3024
-  $phonePixels=New-Object byte[] ($phoneWidth*$phoneHeight*4)
-  $phoneRandom=[Random]::new(4242);$phoneRandom.NextBytes($phonePixels)
-  $phoneImage=[Windows.Media.Imaging.BitmapSource]::Create($phoneWidth,$phoneHeight,96,96,[Windows.Media.PixelFormats]::Bgra32,$null,$phonePixels,$phoneWidth*4)
-  $phonePath=Join-Path $testDirectory 'phone-photo.jpg'
-  $phoneEncoder=[Windows.Media.Imaging.JpegBitmapEncoder]::new();$phoneEncoder.QualityLevel=60
-  $phoneEncoder.Frames.Add([Windows.Media.Imaging.BitmapFrame]::Create($phoneImage))
-  $phoneStream=[IO.File]::Create($phonePath);try{$phoneEncoder.Save($phoneStream)}finally{$phoneStream.Dispose()}
-  Assert-Equal (([IO.FileInfo]::new($phonePath)).Length-le 20MB) $true 'Phone photo source stays inside the accepted source limit'
-  $phoneData=Join-Path $testDirectory 'phone-import';$null=[IO.Directory]::CreateDirectory($phoneData)
-  $phoneImport=Import-WidgetCharacter $phoneData $phonePath
-  $storedLength=([IO.FileInfo]::new($phoneImport.path)).Length
-  Assert-Equal ($storedLength-le 20MB) $true 'Normalized phone photo stays inside the 20 MB reader limit'
-  $storedPhone=Read-WidgetCharacterImage $phoneImport.path
-  Assert-Equal ([Math]::Max($storedPhone.PixelWidth,$storedPhone.PixelHeight)) 2048 'Stored phone photo uses the bounded display resolution'
-  Assert-Equal (Get-WidgetCharacter $fixtureApp $phoneData $phoneImport.id).path $phoneImport.path 'Phone photo import is selectable through the activation path'
-
   $unsafeId='custom-'+('a'*32)
   $saved=ConvertFrom-Json $manifestBefore
   Write-TestCharacterJson $manifestPath @{version=1;characters=@($saved.characters)+@(@{id=$unsafeId;name='unsafe';file='..\gpt-dragon-niang-bust.png'})}

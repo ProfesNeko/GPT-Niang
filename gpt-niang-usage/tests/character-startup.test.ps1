@@ -36,53 +36,15 @@ $source=[IO.File]::ReadAllText((Join-Path $AppDir 'widget.ps1'),[Text.Encoding]:
       @{name=('corrupt selected PNG / '+$mode);id=$customId;follow=$follow;volume=$volume;expected='gpt-dragon'}
     )
   }
-  foreach($bubbleValue in @(1.0,2.5,0.2,'invalid')){
-    $cases+=@{name=('independent bubble '+$bubbleValue);id='test-alternative';follow=$true;volume=0.37;expected='test-alternative';bubble=$bubbleValue}
-  }
-  foreach($autoCase in @(@{enabled=$true;seconds=60;expectedEnabled=$true;expectedSeconds=60},@{enabled=$false;seconds=900;expectedEnabled=$false;expectedSeconds=900},@{enabled='true';seconds=60.1;expectedEnabled=$false;expectedSeconds=300},@{enabled=$true;seconds='invalid';expectedEnabled=$true;expectedSeconds=300})){
-    $cases+=@{name=('automatic quote startup '+$autoCase.enabled+' / '+$autoCase.seconds);id='test-alternative';follow=$true;volume=0.37;expected='test-alternative';auto=$autoCase}
-  }
-  foreach($completionValue in @($true,$false,'false')){
-    $cases+=@{name=('reply reminder '+$completionValue);id='test-alternative';follow=$true;volume=0.37;expected='test-alternative';completion=$completionValue}
-  }
   foreach($case in $cases){
-    if($null-ne $case.id){[IO.File]::WriteAllText($settings,(@{characterId=$case.id;scale=0.6;followHost=$case.follow;soundVolume=$case.volume;layoutVersion=2;right=781.6;left=54.4;bottom=87.2}|ConvertTo-Json),[Text.UTF8Encoding]::new($false))}
+    if($null-ne $case.id){[IO.File]::WriteAllText($settings,(@{characterId=$case.id;scale=0.6;followHost=$case.follow;soundVolume=$case.volume}|ConvertTo-Json),[Text.UTF8Encoding]::new($false))}
     elseif([IO.File]::Exists($settings)){[IO.File]::Delete($settings)}
-    if($case.ContainsKey('bubble')){
-      $saved=Get-Content -LiteralPath $settings -Raw -Encoding UTF8|ConvertFrom-Json
-      $saved|Add-Member -NotePropertyName bubbleScale -NotePropertyValue $case.bubble
-      [IO.File]::WriteAllText($settings,($saved|ConvertTo-Json),[Text.UTF8Encoding]::new($false))
-    }
-    if($case.ContainsKey('auto')){
-      $saved=Get-Content -LiteralPath $settings -Raw -Encoding UTF8|ConvertFrom-Json
-      $saved|Add-Member -NotePropertyName autoQuoteEnabled -NotePropertyValue $case.auto.enabled
-      $saved|Add-Member -NotePropertyName autoQuoteIntervalSeconds -NotePropertyValue $case.auto.seconds
-      [IO.File]::WriteAllText($settings,($saved|ConvertTo-Json),[Text.UTF8Encoding]::new($false))
-    }
-    if($case.ContainsKey('completion')){
-      $saved=Get-Content -LiteralPath $settings -Raw -Encoding UTF8|ConvertFrom-Json
-      $saved|Add-Member -NotePropertyName taskCompletionBubble -NotePropertyValue $case.completion
-      [IO.File]::WriteAllText($settings,($saved|ConvertTo-Json),[Text.UTF8Encoding]::new($false))
-    }
     $settingsBefore=if([IO.File]::Exists($settings)){[IO.File]::ReadAllText($settings)}else{$null}
     $output=& $powerShell -NoProfile -STA -ExecutionPolicy Bypass -File $wrapper -AppDir $fixtureApp
     if($LASTEXITCODE-ne 0){throw ($case.name+' startup failed: '+($output|Out-String))}
     $result=($output|Out-String)|ConvertFrom-Json
     if(!$result.ok -or !$result.imageLoaded -or $result.characterId-ne $case.expected){throw ($case.name+' startup returned an unexpected character: '+($output|Out-String))}
     if($null-eq $result.soundVolume -or [Math]::Abs([double]$result.soundVolume-[double]$case.volume)-gt 0.000000000001){throw ($case.name+' startup did not restore fractional sound volume '+$case.volume+': '+($output|Out-String))}
-    if($null-ne $case.id){
-      foreach($coordinate in @(@{name='right';value=781.6},@{name='left';value=54.4},@{name='bottom';value=87.2})){
-        if([Math]::Abs([double]$result.placement.($coordinate.name)-$coordinate.value)-gt 0.0000001){throw ($case.name+' rounded a saved placement coordinate: '+$coordinate.name)}
-      }
-    }
-    $expectedSize=if($null-eq $case.id){1.0}else{0.6}
-    $expectedBubble=if($case.ContainsKey('bubble') -and $case.bubble-is [double] -and $case.bubble-ge 0.6 -and $case.bubble-le 2.5){$case.bubble}else{$expectedSize}
-    if($result.sizing.character-ne $expectedSize -or $result.sizing.bubble-ne $expectedBubble){throw 'Legacy combined size was not preserved by migration'}
-    $expectedAutoEnabled=if($case.ContainsKey('auto')){$case.auto.expectedEnabled}else{$false}
-    $expectedAutoSeconds=if($case.ContainsKey('auto')){$case.auto.expectedSeconds}else{300}
-    if($result.autoQuotes.enabled-ne $expectedAutoEnabled -or $result.autoQuotes.intervalSeconds-ne $expectedAutoSeconds){throw 'Startup did not restore validated automatic quote settings'}
-    $completionExpected=$case.ContainsKey('completion') -and $case.completion-is [bool] -and $case.completion
-    if($result.completion.enabled-ne $completionExpected -or $result.completion.monitorPid-ne 0){throw 'CheckOnly did not restore strict reminder preference without starting a process'}
     if($result.dataDir-ne $fixtureData){throw 'Startup escaped the isolated fixture data directory'}
     $settingsAfter=if([IO.File]::Exists($settings)){[IO.File]::ReadAllText($settings)}else{$null}
     if($settingsAfter-cne $settingsBefore){throw 'CheckOnly unexpectedly persisted startup fallback'}
