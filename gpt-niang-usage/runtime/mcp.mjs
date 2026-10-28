@@ -22,7 +22,7 @@ async function handle(m){
         const configPath=path.join(root,'installation.json');
         const config=JSON.parse(fs.readFileSync(configPath,'utf8').replace(/^\uFEFF/,''));
         const r=await requestRefresh(config,configPath);
-        const data={ok:r.ok,queryOk:r.queryOk,source:'Codex 官方订阅额度接口',plan:r.plan,planLabel:r.planLabel,planKnown:r.planKnown,planSource:r.planSource,authType:r.authType,errorCode:r.errorCode,observedAt:r.observedAt?new Date(r.observedAt).toISOString():null,error:r.error,windows:(r.windows??[]).map(w=>({...w,state:freshness(w,r.observedAt),resetBeijing:Number.isFinite(w.resetsAt) && w.resetsAt>0?new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(w.resetsAt*1000)):null}))};
+        const data={ok:r.ok,queryOk:r.queryOk,source:'当前 Codex 桌面版的账户剩余用量',plan:r.plan,planLabel:r.planLabel,planKnown:r.planKnown,planSource:r.planSource,authType:r.authType,errorCode:r.errorCode,observedAt:r.observedAt?new Date(r.observedAt).toISOString():null,error:r.error,windows:(r.windows??[]).map(w=>({...w,state:freshness(w,r.observedAt),resetBeijing:Number.isFinite(w.resetsAt) && w.resetsAt>0?new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(w.resetsAt*1000)):null}))};
         if(r.retryable)data.retryable=true;
         result={content:[{type:'text',text:JSON.stringify(data)}],isError:!r.ok || !r.queryOk};break;
       }

@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import net from 'node:net';
+import {randomUUID} from 'node:crypto';
 import {spawn} from 'node:child_process';
 import {once} from 'node:events';
 import {fileURLToPath} from 'node:url';
@@ -12,21 +14,12 @@ import {acquireWorkerLock,readJson,healthyWorker} from '../runtime/worker-state.
 
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const worker=fileURLToPath(new URL('../runtime/watch.mjs',import.meta.url));
-// Missing-CLI fixtures must not discover the developer's installed Codex.
+// Isolated fixtures must not read the developer's live desktop account.
 function isolatedWorkerEnv(dir){
   const env={...process.env};
-  for(const key of Object.keys(env))if(['localappdata','path'].includes(key.toLowerCase()))delete env[key];
+  for(const key of Object.keys(env))if(['localappdata','path','codex_thread_id','codex_app_tools_pipe_path'].includes(key.toLowerCase()))delete env[key];
   return {...env,LOCALAPPDATA:dir,PATH:dir,GPT_NIANG_CODEX_APP:path.join(dir,'absent.app')};
 }
-const mockCli=[
-  "const fs=require('node:fs'),readline=require('node:readline');",
-  "let account;const send=(id,result)=>process.stdout.write(JSON.stringify({id,result})+'\\n');",
-  "readline.createInterface({input:process.stdin}).on('line',line=>{",
-  "const request=JSON.parse(line);if(request.id===1)send(1,{});",
-  "if(request.id===2){account=JSON.parse(fs.readFileSync('account.json','utf8'));send(2,{account});}",
-  "if(request.id===3){fs.appendFileSync('queries.txt',account.email+'\\n');fs.writeFileSync('query-started.json',JSON.stringify(account));setTimeout(()=>send(3,{rateLimits:{primary:{windowDurationMins:300,usedPercent:account.email[0]==='a'?12:61,resetsAt:null}}}),account.email[0]==='a'?1700:20);}",
-  "});"
-].join('\n');
 
 test('exclusive worker ownership survives stale metadata and cannot be released by an old owner',async()=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'gpt-niang-lock-'));
@@ -182,7 +175,24 @@ for(const mode of ['request-file','refresh-flag'])test('an account switch during
   const accountA={type:'chatgpt',email:'a@example.test',planType:'plus'};
   const accountB={type:'chatgpt',email:'b@example.test',planType:'plus'};
   const configPath=path.join(dir,'installation.json');
-  const config={dataDir:dir,codexPath:process.execPath};
+  const config={dataDir:dir,desktopThreadId:'test-thread'};
+  const pipe=process.platform==='win32'?'\\\\.\\pipe\\gpt-niang-test-desktop-'+randomUUID():path.join(dir,'desktop.sock');
+  const sockets=new Set();
+  const desktop=net.createServer(socket=>{
+    sockets.add(socket);socket.on('close',()=>sockets.delete(socket));socket.on('error',()=>{});
+    let data=Buffer.alloc(0);
+    socket.on('data',chunk=>{
+      data=Buffer.concat([data,chunk]);
+      if(data.length<4||data.length<4+data.readUInt32LE(0))return;
+      const request=JSON.parse(data.subarray(4).toString());
+      const send=result=>{const body=Buffer.from(JSON.stringify({jsonrpc:'2.0',id:request.id,result}));const header=Buffer.alloc(4);header.writeUInt32LE(body.length);socket.end(Buffer.concat([header,body]));};
+      if(request.method==='tools/list'){send({tools:[{name:'get_usage_limits',namespace:'codex_app'}]});return;}
+      const account=readJson(path.join(dir,'account.json'));
+      fs.appendFileSync(path.join(dir,'queries.txt'),account.email+'\n');
+      atomicJson(path.join(dir,'query-started.json'),account);
+      setTimeout(()=>send({success:true,contentItems:[{type:'inputText',text:JSON.stringify({accountId:account.email,rateLimits:{planType:'plus',primary:{windowDurationMins:300,usedPercent:account.email[0]==='a'?12:61,resetsAt:null}}})}]}),account.email[0]==='a'?1700:20);
+    });
+  });
   let child;
   const waitUntil=async predicate=>{
     const deadline=Date.now()+7000;
@@ -190,9 +200,9 @@ for(const mode of ['request-file','refresh-flag'])test('an account switch during
     assert.ok(predicate());
   };
   try {
-    fs.writeFileSync(path.join(dir,'app-server'),mockCli,'utf8');
+    await new Promise(resolve=>desktop.listen(pipe,resolve));
     atomicJson(configPath,config);atomicJson(path.join(dir,'account.json'),accountA);
-    const startWorker=()=>{if(!child)child=spawn(process.execPath,[worker,configPath,'0'],{cwd:dir,windowsHide:true,stdio:'ignore'});};
+    const startWorker=()=>{if(!child)child=spawn(process.execPath,[worker,configPath,'0'],{cwd:dir,env:{...isolatedWorkerEnv(dir),CODEX_APP_TOOLS_PIPE_PATH:pipe},windowsHide:true,stdio:'ignore'});};
     const options={startWorker,timeoutMs:8000,pollMs:20};
     const first=requestRefresh(config,configPath,options);
     await waitUntil(()=>readJson(path.join(dir,'query-started.json'))?.email===accountA.email);
@@ -207,6 +217,8 @@ for(const mode of ['request-file','refresh-flag'])test('an account switch during
     const exited=once(child,'exit');fs.writeFileSync(path.join(dir,'stop.flag'),'test-stop');await exited;
   } finally {
     if(child && child.exitCode===null && child.signalCode===null){const exited=once(child,'exit');child.kill();await exited;}
+    for(const socket of sockets)socket.destroy();
+    if(desktop.listening)await new Promise(resolve=>desktop.close(resolve));
     fs.rmSync(dir,{recursive:true,force:true});
   }
 });

@@ -45,6 +45,12 @@ function Get-WidgetInstallPreflight {
   $startup=[Environment]::GetFolderPath('Startup');if(!$startup){throw 'Windows Startup folder unavailable.'}
   $shortcut=Join-Path $startup 'GPT Niang Usage.lnk'
   $config=@{version=$manifest.version;appDir=$appDir;dataDir=$dataDir;nodePath=$node;codexPath=$codex;marketplaceRoot=(Split-Path $appDir -Parent);startupShortcut=$shortcut;installedAt=[DateTime]::UtcNow.ToString('o');updateAgent=(Get-WidgetUpdateAgentDir);updaterSchema=1}
+  # The running desktop bridge requires a real existing conversation context.
+  # Keep a previous binding on upgrade; never publish this local value in source.
+  $desktopThread=$env:CODEX_THREAD_ID
+  if(!$desktopThread -and $previous){$desktopThread=$previous.desktopThreadId}
+  if($desktopThread){$config.desktopThreadId=$desktopThread}
+  $config.usageSource='desktop'
   $info=Get-WidgetSupervisorInfo -AppDir $appDir -Configuration $config
   $null=Get-WidgetSupervisorTask $info
   if(Test-Path -LiteralPath $shortcut){

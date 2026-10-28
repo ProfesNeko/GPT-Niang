@@ -1,9 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import {spawn} from 'node:child_process';
-import readline from 'node:readline';
+import {readDesktopLimits} from './desktop-usage.mjs';
 import {createHash,randomUUID} from 'node:crypto';
-import {pluginVersion} from './metadata.mjs';
 import {identifyPlan,quotaWindowLabel} from './plan.mjs';
 
 const resetTime=value=>typeof value==='number' && Number.isFinite(value) && value>0 && value<=253402271999?value:null;
@@ -108,67 +106,22 @@ export function resolveCodexExecutable(configuredPath,{env=process.env,platform=
   return configuredPath;
 }
 
-// Only three read-only protocol methods are sent. There is no thread or model call.
-export function readUsage(cli, {timeoutMs=18000,spawnProcess=spawn,onAccount=()=>{}}={}) {
-  return new Promise(resolve=>{
-    let finished=false,proc,lines,accountKey=null,account=null,planInfo=identifyPlan(null,null),expectedId=1;
-    const failure=(error,errorCode)=>({ok:false,queryOk:false,error,windows:[],...planInfo,accountKey,clearPrevious:!accountKey,...(errorCode?{errorCode}:{})});
-    const stopChild=()=>{try{proc?.stdin.end();proc?.kill();}catch{}};
-    const finish=data=>{
-      if(finished)return; finished=true; clearTimeout(timer);
-      lines?.close();
-      process.removeListener('exit',stopChild);
-      stopChild();
-      resolve(data);
-    };
-    const timer=setTimeout(()=>finish(failure('查询超时，稍后重试')),timeoutMs);
-    try{proc=spawnProcess(cli,['app-server','--stdio'],{windowsHide:true,stdio:['pipe','pipe','pipe']});}
-    catch{finish(failure('Codex 额度服务暂不可用'));return;}
-    process.once('exit',stopChild);
-    proc.stderr.on('data',()=>{}).on('error',()=>{});
-    proc.on('error',error=>finish(failure(error.code==='ENOENT'?'未找到 Codex 程序，请检查客户端安装':'无法启动 Codex 额度服务',error.code)));
-    proc.on('close',()=>finish(failure('Codex 额度服务已结束')));
-    proc.stdout.on('error',()=>finish(failure('Codex 额度连接已结束')));
-    proc.stdin.on('error',()=>finish(failure('Codex 额度连接已结束')));
-    const send=data=>{try{proc.stdin.write(JSON.stringify(data)+'\n');}catch{finish(failure('额度连接不可用'));}};
-    lines=readline.createInterface({input:proc.stdout});
-    lines.on('line',line=>{
-      if(finished)return;
-      if(line.length>2*1024*1024)return;
-      let m;try{m=JSON.parse(line);}catch{return;}
-      if(!m || typeof m!=='object' || Array.isArray(m))return;
-      if(m.id!==expectedId)return;
-      if(m.id===1){
-        if(m.error)return finish(failure('Codex 额度接口未就绪'));
-        expectedId=null;
-        send({method:'initialized',params:{}});
-        expectedId=2;
-        send({id:2,method:'account/read',params:{refreshToken:false}});
-      } else if(m.id===2){
-        if(m.error)return finish(failure('暂时无法读取登录状态'));
-        const type=m.result?.account?.type;
-        account=m.result?.account;
-        planInfo=identifyPlan(account?.planType,null,type??null);
-        // Account details and credentials are neither stored nor displayed.
-        if(type!=='chatgpt' && type!=='chatgptAuthTokens')return finish(failure('请在 Codex 中使用 ChatGPT 账号登录（API Key 不提供订阅额度）','AUTH_MODE_UNSUPPORTED'));
-        accountKey=accountFingerprint(m.result.account);
-        try{onAccount(accountKey);}catch{return finish(failure('无法保存账户切换状态'));}
-        expectedId=3;
-        send({id:3,method:'account/rateLimits/read',params:{}});
-      } else if(m.id===3){
-        if(m.error)return finish(failure('暂时无法读取额度，请检查登录状态或稍后重试','RATE_LIMITS_READ_FAILED'));
-        const data=normalizeLimits(m.result);
-        planInfo=identifyPlan(account?.planType,data.plan,account?.type);
-        Object.assign(data,planInfo);
-        const currentKey=accountFingerprint({...account,planType:data.plan});
-        if(currentKey!==accountKey){accountKey=currentKey;try{onAccount(accountKey);}catch{return finish(failure('无法保存套餐切换状态'));}}
-        data.clearPrevious=(data.queryOk && !data.ok) || !accountKey;
-        data.accountKey=accountKey;
-        finish(data);
-      }
-    });
-    send({id:1,method:'initialize',params:{clientInfo:{name:'gpt_niang_usage',title:'GPT 娘额度挂件',version:pluginVersion}}});
-  });
+// Read the running desktop's account usage through its existing app-tools bridge.
+// The legacy first argument is ignored; it can never start an executable.
+export async function readUsage(_legacyCli, {onAccount=()=>{},readDesktop=readDesktopLimits,...options}={}) {
+  try {
+    const raw=await readDesktop(options);
+    const bucket=raw?.rateLimitsByLimitId?.codex??raw?.rateLimits;
+    const accountKey=accountFingerprint({type:'chatgpt',accountId:raw.accountId,planType:bucket?.planType});
+    onAccount(accountKey);
+    const data=normalizeLimits(raw);
+    return {...data,source:'desktop',authType:'chatgpt',accountKey,
+      clearPrevious:!accountKey||(data.queryOk&&!data.ok)};
+  } catch {
+    return {ok:false,queryOk:false,source:'desktop',...identifyPlan(null,null),
+      errorCode:'DESKTOP_USAGE_UNAVAILABLE',error:'暂时无法读取当前 Codex 桌面版的剩余用量，请确认桌面版已打开',
+      accountKey:null,clearPrevious:true,windows:[]};
+  }
 }
 
 export function atomicJson(file,data) {

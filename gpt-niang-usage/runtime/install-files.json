@@ -34,6 +34,7 @@
   "runtime/metadata.mjs",
   "runtime/mcp.mjs",
   "runtime/usage.mjs",
+  "runtime/desktop-usage.mjs",
   "runtime/plan.mjs",
   "runtime/detect-plan.mjs",
   "runtime/watch.mjs",

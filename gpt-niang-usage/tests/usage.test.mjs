@@ -1,7 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {EventEmitter} from 'node:events';
-import {PassThrough} from 'node:stream';
 import {spawn} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {normalizeLimits,freshness,readUsage,accountFingerprint} from '../runtime/usage.mjs';
@@ -57,29 +55,16 @@ test('personal reset and unknown amount fields remain unavailable, never invente
   const expired=normalizeLimits({rateLimits:{individualLimit:individual({resetsAt:1})}},1000);
   assert.equal(freshness(expired.windows[0],1000,2000),'expired');
 });
-test('personal cap survives the read-only RPC and account snapshot pipeline',async()=>{
-  const calls=[];
-  const spawnProcess=()=>{
-    const proc=new EventEmitter();
-    proc.stdin=new PassThrough();proc.stdout=new PassThrough();proc.stderr=new PassThrough();proc.kill=()=>{};
-    proc.stdin.on('data',chunk=>{
-      for(const line of chunk.toString().trim().split('\n')){
-        const request=JSON.parse(line);calls.push(request.method);
-        if(request.id===undefined)continue;
-        const result=request.id===1?{}:request.id===2?{account:{type:'chatgpt',email:'test@example.test',planType:'business'}}:{rateLimits:{planType:'business',individualLimit:individual()}};
-        queueMicrotask(()=>proc.stdout.write(JSON.stringify({id:request.id,result})+'\n'));
-      }
-    });return proc;
-  };
-  const r=await readUsage('fake',{spawnProcess});
+test('personal cap survives the desktop account snapshot pipeline',async()=>{
+  let reads=0;
+  const r=await readUsage('unused',{readDesktop:async()=>{reads++;return {accountId:'business-account',rateLimits:{planType:'business',individualLimit:individual()}};}});
+  assert.equal(reads,1);assert.equal(r.source,'desktop');
   assert.equal(r.ok,true);assert.equal(r.clearPrevious,false);assert.equal(r.windows[0].remaining,48);
-  assert.deepEqual(calls,['initialize','initialized','account/read','account/rateLimits/read']);
   const personal={...normalizeLimits({rateLimits:{primary:w(1)}}),accountKey:'personal'};
   const switched=mergeUsageSnapshot(personal,r);
   assert.equal(switched.windows.length,1);assert.equal(switched.windows[0].kind,'individual');
-  const unavailable={ok:false,queryOk:true,clearPrevious:true,windows:[],accountKey:r.accountKey};
-  assert.deepEqual(mergeUsageSnapshot(switched,unavailable).windows,[]);
 });
+
 test('prefer current codex bucket over legacy and unrelated model buckets',()=>{
   const r=normalizeLimits({rateLimits:{primary:w(90)},rateLimitsByLimitId:{codex:{primary:w(12),secondary:w(61,10080)},other:{primary:w(98)}}},1000);
   assert.deepEqual(r.windows.map(x=>[x.minutes,x.used,x.remaining]),[[300,12,88],[10080,61,39]]);
@@ -104,36 +89,19 @@ test('passed reset stays expired instead of invented replenishment',()=>{
   assert.equal(freshness({resetsAt:1000},1000,200000),'stale');
   assert.equal(freshness({resetsAt:1000},1000,2000),'fresh');
 });
-test('missing Codex executable returns a bounded actionable failure',async()=>{
-  const r=await readUsage('Z:/not-a-codex-executable.exe',{timeoutMs:2000});
-  assert.equal(r.ok,false);assert.deepEqual(r.windows,[]);
+test('desktop unavailable returns an actionable failure without launching the legacy CLI',async()=>{
+  let spawned=false;
+  const r=await readUsage('Z:/not-a-codex-executable.exe',{spawnProcess:()=>{spawned=true;throw new Error('must not run');},readDesktop:async()=>{throw new Error('desktop closed');}});
+  assert.equal(spawned,false);assert.equal(r.ok,false);assert.equal(r.clearPrevious,true);
+  assert.equal(r.errorCode,'DESKTOP_USAGE_UNAVAILABLE');assert.deepEqual(r.windows,[]);
 });
-test('account read protocol error clears a snapshot whose account cannot be verified',async()=>{
-  const calls=[];
-  const spawnProcess=()=>{
-    const proc=new EventEmitter();
-    proc.stdin=new PassThrough();proc.stdout=new PassThrough();proc.stderr=new PassThrough();
-    proc.kill=()=>{};
-    let pending='';
-    proc.stdin.on('data',chunk=>{
-      pending+=chunk.toString();
-      let at;
-      while((at=pending.indexOf('\n'))>=0){
-        const request=JSON.parse(pending.slice(0,at));pending=pending.slice(at+1);
-        calls.push(request.method);
-        if(request.method==='initialize')queueMicrotask(()=>proc.stdout.write(JSON.stringify({id:request.id,result:{}})+'\n'));
-        else if(request.method==='account/read')queueMicrotask(()=>proc.stdout.write(JSON.stringify({id:request.id,error:{code:-32603,message:'temporary account service error'}})+'\n'));
-      }
-    });
-    return proc;
-  };
-  const response=await readUsage('fake-codex',{timeoutMs:2000,spawnProcess});
-  assert.equal(response.ok,false);assert.equal(response.clearPrevious,true);
-  assert.deepEqual(calls,['initialize','initialized','account/read']);
+
+test('desktop read failure clears a snapshot whose account cannot be verified',async()=>{
+  const response=await readUsage(null,{readDesktop:async()=>{throw new Error('offline');}});
   const previous=normalizeLimits({rateLimits:{primary:w(12)}},1000);
   const snapshot=mergeUsageSnapshot(previous,response,2000);
   assert.equal(snapshot.ok,false);assert.deepEqual(snapshot.windows,[]);assert.equal(snapshot.checkedAt,2000);
-  assert.equal(snapshot.error,'暂时无法读取登录状态');
+  assert.match(snapshot.error,/桌面版/);
 });
 
 test('a missing reset keeps the valid percentage and does not invent expiry',()=>{
@@ -176,58 +144,27 @@ test('quota failures reuse only a verified same-account snapshot',()=>{
   assert.equal(mergeUsageSnapshot(previous,older,2000),previous);
 });
 
-test('account identity is attached even when the quota read fails',async()=>{
-  const account={type:'chatgpt',email:'b@example.test',planType:'plus'};
+test('desktop identity is attached even when returned quota data is incomplete',async()=>{
   const seen=[];
-  const spawnProcess=()=>{
-    const proc=new EventEmitter();
-    proc.stdin=new PassThrough();proc.stdout=new PassThrough();proc.stderr=new PassThrough();proc.kill=()=>{};
-    proc.stdin.on('data',chunk=>{
-      for(const line of chunk.toString().trim().split('\n')) {
-        const request=JSON.parse(line);
-        if(request.id===undefined)continue;
-        const response=request.id===1?{result:{}}:request.id===2?{result:{account}}:{error:{code:-32603}};
-        queueMicrotask(()=>proc.stdout.write(JSON.stringify({id:request.id,...response})+'\n'));
-      }
-    });return proc;
-  };
-  const result=await readUsage('fake-codex',{spawnProcess,onAccount:key=>seen.push(key)});
+  const result=await readUsage(null,{readDesktop:async()=>({accountId:'account-b',rateLimits:{planType:'plus',primary:w(NaN)}}),onAccount:key=>seen.push(key)});
   assert.equal(result.ok,false);assert.equal(result.queryOk,false);assert.equal(result.clearPrevious,false);
-  assert.equal(result.accountKey,accountFingerprint(account));assert.deepEqual(seen,[result.accountKey]);
-  assert.equal(JSON.stringify(result).includes(account.email),false);
+  assert.equal(result.accountKey,accountFingerprint({type:'chatgpt',accountId:'account-b',planType:'plus'}));
+  assert.deepEqual(seen,[result.accountKey]);assert.equal(JSON.stringify(result).includes('account-b'),false);
 });
 
-test('non-object JSON protocol messages are ignored without crashing the worker',async()=>{
-  const spawnProcess=()=>{
-    const proc=new EventEmitter();
-    proc.stdin=new PassThrough();proc.stdout=new PassThrough();proc.stderr=new PassThrough();proc.kill=()=>{};
-    proc.stdin.on('data',()=>queueMicrotask(()=>proc.stdout.write('null\nfalse\n42\n[]\n')));
-    return proc;
-  };
-  const result=await readUsage('fake-codex',{spawnProcess,timeoutMs:25});
-  assert.equal(result.ok,false);assert.equal(result.clearPrevious,true);assert.match(result.error,/超时/);
+test('invalid desktop replies fail without crashing the worker',async()=>{
+  for(const raw of [null,false,42,[]]){
+    const result=await readUsage(null,{readDesktop:async()=>raw});
+    assert.equal(result.ok,false);assert.equal(result.clearPrevious,true);
+  }
 });
 
-test('out-of-order quota responses cannot bypass account verification',async()=>{
-  const account={type:'chatgpt',email:'verified@example.test',planType:'plus'};
-  const spawnProcess=()=>{
-    const proc=new EventEmitter();
-    proc.stdin=new PassThrough();proc.stdout=new PassThrough();proc.stderr=new PassThrough();proc.kill=()=>{};
-    proc.stdin.on('data',chunk=>{
-      for(const line of chunk.toString().trim().split('\n')) {
-        const request=JSON.parse(line);
-        if(request.id===undefined)continue;
-        queueMicrotask(()=>{
-          if(request.id===1)proc.stdout.write(JSON.stringify({id:3,result:{rateLimits:{primary:w(99)}}})+'\n');
-          const result=request.id===1?{}:request.id===2?{account}:{rateLimits:{primary:w(12)}};
-          proc.stdout.write(JSON.stringify({id:request.id,result})+'\n');
-        });
-      }
-    });return proc;
-  };
-  const result=await readUsage('fake-codex',{spawnProcess});
-  assert.equal(result.ok,true);assert.equal(result.accountKey,accountFingerprint(account));
-  assert.equal(result.windows[0].remaining,88);
+test('desktop account switches cannot reuse a previous account snapshot',async()=>{
+  const read=accountId=>readUsage(null,{readDesktop:async()=>({accountId,rateLimits:{planType:'plus',primary:w(12)}})});
+  const a=await read('account-a'),b=await read('account-b');
+  assert.notEqual(a.accountKey,b.accountKey);
+  const failed={...b,ok:false,queryOk:false,windows:[]};
+  assert.equal(mergeUsageSnapshot(a,failed).ok,false);
 });
 
 test('MCP rejects malformed input without crashing and still serves read-only protocol metadata',async()=>{

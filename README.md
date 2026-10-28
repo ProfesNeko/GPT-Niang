@@ -1,3 +1,5 @@
+> **Windows desktop-usage fork:** this branch reads usage through the running Codex desktop application's local bridge. It never starts a separate Codex app-server for quota queries. Requires a running Windows Codex desktop and installation from an active Codex task. See [desktop reader, installation and limitations](docs/desktop-usage-fork.md). The upstream release notes below describe the original project.
+
 # GPT-Niang（GPT 娘）
 
 让一只白发紫瞳的小龙娘，陪你看 Codex 的剩余额度。

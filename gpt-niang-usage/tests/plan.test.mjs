@@ -1,28 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {EventEmitter} from 'node:events';
-import {PassThrough} from 'node:stream';
 import {identifyPlan,quotaWindowLabel} from '../runtime/plan.mjs';
 import {normalizeLimits,readUsage,accountFingerprint} from '../runtime/usage.mjs';
 import {mergeUsageSnapshot} from '../runtime/refresh-queue.mjs';
 
 const window=(minutes,used=20)=>({windowDurationMins:minutes,usedPercent:used,resetsAt:null});
-function fakeServer(account,limits,error=false) {
-  const methods=[];
-  const spawnProcess=()=>{
-    const proc=new EventEmitter();
-    proc.stdin=new PassThrough();proc.stdout=new PassThrough();proc.stderr=new PassThrough();proc.kill=()=>{};
-    proc.stdin.on('data',chunk=>{
-      for(const line of chunk.toString().trim().split('\n')) {
-        const request=JSON.parse(line);methods.push(request.method);
-        if(request.id===undefined)continue;
-        const response=request.id===1?{result:{}}:request.id===2?{result:{account}}:error?{error:{code:-32603}}:{result:limits};
-        queueMicrotask(()=>proc.stdout.write(JSON.stringify({id:request.id,...response})+'\n'));
-      }
-    });return proc;
-  };
-  return {spawnProcess,methods};
-}
 
 test('all documented plans including Pro use actual windows without a plan-to-duration table',()=>{
   for(const plan of ['free','go','plus','pro','team','business','enterprise','edu','future-plan']) {
@@ -49,38 +31,29 @@ test('known, unknown, absent and stale account plan metadata are distinguished',
   assert.equal(identifyPlan(null,null).plan,null);
   assert.equal(identifyPlan('pro\nTOKEN',null).plan,null);
 });
-test('a plan change in the quota response keeps the account snapshot stable',async()=>{
-  const account={type:'chatgpt',email:'example@example.test',planType:'plus',accessToken:'private'};
-  const server=fakeServer(account,{rateLimits:{planType:'pro',primary:window(300,7)}}),seen=[];
-  const result=await readUsage('fake',{spawnProcess:server.spawnProcess,onAccount:key=>seen.push(key)});
+test('a plan change in desktop quota data keeps the account snapshot stable',async()=>{
+  const seen=[];
+  const read=planType=>readUsage(null,{readDesktop:async()=>({accountId:'same-account',rateLimits:{planType,primary:window(300,7)}}),onAccount:key=>seen.push(key)});
+  const previous=await read('plus'),result=await read('pro');
   assert.equal(result.plan,'pro');assert.equal(result.planSource,'rateLimits');
-  // The plan label is metadata, not account identity: one account must keep one
-  // snapshot key so a failed refresh can preserve the previous windows.
-  assert.deepEqual(seen,[accountFingerprint(account)]);
-  assert.equal(result.accountKey,accountFingerprint(account));
-  assert.deepEqual(server.methods,['initialize','initialized','account/read','account/rateLimits/read']);
-  assert.equal(JSON.stringify(result).includes(account.email),false);
-  assert.equal(JSON.stringify(result).includes(account.accessToken),false);
-  const previous={...result,accountKey:seen[0],windows:[{remaining:99}]};
-  const failed={ok:false,queryOk:false,windows:[],accountKey:seen[0],clearPrevious:false};
-  assert.deepEqual(mergeUsageSnapshot(previous,failed).windows,[{remaining:99}]);
+  assert.equal(previous.accountKey,result.accountKey);
+  assert.deepEqual(seen,[result.accountKey,result.accountKey]);
+  const failed={ok:false,queryOk:false,windows:[],accountKey:result.accountKey,clearPrevious:false};
+  assert.deepEqual(mergeUsageSnapshot(previous,failed).windows,previous.windows);
 });
-test('account plan remains identifiable when limits omit it or the quota request fails',async()=>{
-  const account={type:'chatgpt',email:'pro@example.test',planType:'pro'};
-  const fallback=await readUsage('fake',{spawnProcess:fakeServer(account,{rateLimits:{primary:window(60)}}).spawnProcess});
-  assert.equal(fallback.plan,'pro');assert.equal(fallback.planSource,'account');assert.equal(fallback.ok,true);
-  const failed=await readUsage('fake',{spawnProcess:fakeServer(account,null,true).spawnProcess});
-  assert.equal(failed.plan,'pro');assert.equal(failed.queryOk,false);assert.equal(failed.errorCode,'RATE_LIMITS_READ_FAILED');
+
+test('desktop quota without plan metadata preserves percentages without inventing a plan',async()=>{
+  const result=await readUsage(null,{readDesktop:async()=>({accountId:'account',rateLimits:{primary:window(60)}})});
+  assert.equal(result.plan,null);assert.equal(result.ok,true);assert.equal(result.planKnown,false);
+  const failed=await readUsage(null,{readDesktop:async()=>{throw new Error('signed out');}});
+  assert.equal(failed.plan,null);assert.equal(failed.queryOk,false);assert.equal(failed.clearPrevious,true);
 });
-test('no windows, malformed windows and unsupported authentication do not masquerade as a plan failure',async()=>{
-  const absent=normalizeLimits({rateLimits:{planType:'go',primary:null,secondary:null}});
+
+test('missing and malformed desktop windows remain distinct from transport failures',async()=>{
+  const absent=await readUsage(null,{readDesktop:async()=>({accountId:'account',rateLimits:{planType:'go',primary:null,secondary:null}})});
   assert.equal(absent.queryOk,true);assert.equal(absent.errorCode,'NO_WINDOWS');
   const invalid=normalizeLimits({rateLimits:{primary:window(-1)}});
   assert.equal(invalid.queryOk,false);assert.equal(invalid.errorCode,'INVALID_WINDOWS');
-  const server=fakeServer({type:'apiKey'},null);
-  const api=await readUsage('fake',{spawnProcess:server.spawnProcess});
-  assert.equal(api.errorCode,'AUTH_MODE_UNSUPPORTED');assert.equal(api.authType,'apiKey');
-  assert.equal(server.methods.includes('account/rateLimits/read'),false);
 });
 
 // PR #9 regression cases, resolved using the existing exact-duration labels.

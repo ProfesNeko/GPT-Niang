@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import {readUsage,atomicJson,resolveCodexExecutable} from './usage.mjs';
+import {readUsage,atomicJson} from './usage.mjs';
 import {createRefreshQueue,mergeUsageSnapshot,readRefreshRequest} from './refresh-queue.mjs';
 import {acquireWorkerLock,processAlive,readJson} from './worker-state.mjs';
 import {readPendingRequests,completeRequests,cleanRefreshResults,widgetUpdating,updatingSnapshot} from './refresh-client.mjs';
@@ -9,7 +9,7 @@ import {createPipeRefreshHandler} from './worker-ipc.mjs';
 import {pluginVersion} from './metadata.mjs';
 
 const config=readJson(process.argv[2]);
-if(!config?.dataDir || !config?.codexPath)throw new Error('Invalid widget installation configuration');
+if(!config?.dataDir)throw new Error('Invalid widget installation configuration');
 if(widgetUpdating(config.dataDir))process.exit(0);
 const parentPid=Number(process.argv[3]??0);
 if(!Number.isSafeInteger(parentPid) || parentPid<0)throw new Error('Invalid parent process id');
@@ -54,7 +54,7 @@ refresh=createRefreshQueue(async()=>{
   if(widgetUpdating(config.dataDir)){ipc.complete(pipeBatch,updatingSnapshot());completeRequests(config.dataDir,batch,updatingSnapshot());return;}
   for(const request of batch)activeRequestIds.add(request.id);
   try {
-    const next=await readUsage(resolveCodexExecutable(config.codexPath),{onAccount:accountKey=>{
+    const next=await readUsage(null,{threadId:config.desktopThreadId,onAccount:accountKey=>{
       if(status?.accountKey!==accountKey || !accountKey)save({ok:false,queryOk:false,accountKey,error:'正在读取当前账户额度…',windows:[],checkedAt:Date.now()});
     }});
     save(mergeUsageSnapshot(status,next));
