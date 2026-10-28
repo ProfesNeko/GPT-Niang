@@ -233,7 +233,9 @@ final class WidgetModel: ObservableObject {
         }
         if workerUnhealthySince == nil { workerUnhealthySince = now }
         let grace: TimeInterval = workerReportedHeartbeat ? 10 : 30
-        guard workerRecoveryAvailable, now - (workerUnhealthySince ?? now) >= grace else { return }
+        // Compare deadlines directly to avoid cancellation rounding just below
+        // the boundary when fractional uptime crosses a floating-point range.
+        guard workerRecoveryAvailable, now >= (workerUnhealthySince ?? now) + grace else { return }
         // Only the Process created by this GUI is signalled. Wait for its exit;
         // no foreign PID, lock removal or SIGKILL fallback is used.
         workerRecoveryPending = true; workerRecoveryAvailable = false
